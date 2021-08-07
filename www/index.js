@@ -1,3 +1,3 @@
-import * as wasm from "hello-wasm-pack";
+import * as galaxy from "../pkg";
 
-wasm.greet();
+galaxy.greet();

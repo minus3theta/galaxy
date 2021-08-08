@@ -36,6 +36,8 @@ features = [
   'ImageData',
   'Performance',
   'Window',
+  'MouseEvent',
+  'DomRect',
 ]
 
 [dev-dependencies]

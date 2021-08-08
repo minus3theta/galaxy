@@ -3,7 +3,7 @@ pub mod utils;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+use web_sys::{CanvasRenderingContext2d, EventTarget, HtmlCanvasElement, ImageData, MouseEvent};
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -24,6 +24,7 @@ pub fn initialize() -> Result<(), JsValue> {
     const CANVAS_ID: &str = "galaxy_canvas";
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.get_element_by_id(CANVAS_ID).unwrap();
+    let bounding_rect = canvas.get_bounding_client_rect();
     let canvas: HtmlCanvasElement = canvas.dyn_into::<HtmlCanvasElement>().unwrap();
     let context: CanvasRenderingContext2d = canvas
         .get_context("2d")
@@ -54,13 +55,18 @@ pub fn initialize() -> Result<(), JsValue> {
         context.put_image_data(&data, 0.0, 0.0).ok();
     };
 
+    {
+        let click_handler = Closure::wrap(Box::new(move |event: MouseEvent| {
+            let x = (event.client_x() as f64 - bounding_rect.left()) / bounding_rect.width();
+            let y = (event.client_y() as f64 - bounding_rect.top()) / bounding_rect.height();
+            log(&format!("Clicked {}, {}", x, y));
+        }) as Box<dyn FnMut(_)>);
+        let canvas_event_target: EventTarget = canvas.clone().dyn_into::<EventTarget>().unwrap();
+        canvas_event_target
+            .add_event_listener_with_callback("click", click_handler.as_ref().unchecked_ref())?;
+        click_handler.forget();
+    }
     draw();
 
     Ok(())
-}
-
-#[wasm_bindgen]
-pub fn on_click(x: f64, y: f64) {
-    let msg = format!("Clicked {}, {}", x, y);
-    log(&msg);
 }

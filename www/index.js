@@ -1,7 +1,5 @@
 import * as galaxy from "../pkg";
 
-galaxy.draw();
-
 const canvas = document.getElementById("galaxy_canvas");
 canvas.addEventListener("click", event => {
   const boundingRect = canvas.getBoundingClientRect();

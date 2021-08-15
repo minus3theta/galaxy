@@ -47,9 +47,25 @@ impl PrimFunc {
         use Value::*;
         if self.arity() == args.len() {
             match self {
-                PCons => todo!(),
-                PCar => todo!(),
-                PCdr => todo!(),
+                PCons => {
+                    let e0 = Rc::clone(&args[0]);
+                    let e1 = Rc::clone(&args[1]);
+                    let e2 = Rc::clone(&args[2]);
+                    let expr = EAp(EAp(e2, e0).into(), e1);
+                    evaluate(&expr.into(), env)
+                }
+                PCar => {
+                    let e0 = Rc::clone(&args[0]);
+                    let v: Value = PT.into();
+                    let expr = EAp(e0, v.into());
+                    evaluate(&expr.into(), env)
+                }
+                PCdr => {
+                    let e0 = Rc::clone(&args[0]);
+                    let v: Value = PF.into();
+                    let expr = EAp(e0, v.into());
+                    evaluate(&expr.into(), env)
+                }
                 PAdd => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
                     (VInt(i0), VInt(i1)) => Ok(VInt(i0 + i1)),
                     _ => bail!("add: type error"),
@@ -160,6 +176,12 @@ pub type Thunk = Rc<RefCell<ThunkEnum>>;
 impl Into<Thunk> for Expr {
     fn into(self) -> Thunk {
         Rc::new(RefCell::new(ThunkEnum::TExpr(self)))
+    }
+}
+
+impl Into<Thunk> for Value {
+    fn into(self) -> Thunk {
+        Rc::new(RefCell::new(ThunkEnum::TValue(self)))
     }
 }
 

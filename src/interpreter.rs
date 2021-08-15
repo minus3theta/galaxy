@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::{bail, Context};
 
@@ -9,6 +9,8 @@ pub enum Expr {
     EVar(String),
     EAp(Thunk, Thunk),
 }
+
+pub type Env = HashMap<String, Thunk>;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Value {
@@ -39,7 +41,8 @@ pub enum PrimFunc {
 }
 
 impl PrimFunc {
-    pub fn call(self, args: Vec<Thunk>) -> anyhow::Result<Value> {
+    pub fn call(self, args: Vec<Thunk>, env: &Env) -> anyhow::Result<Value> {
+        use Expr::EAp;
         use PrimFunc::*;
         use Value::*;
         if self.arity() == args.len() {
@@ -47,22 +50,70 @@ impl PrimFunc {
                 PCons => todo!(),
                 PCar => todo!(),
                 PCdr => todo!(),
-                PAdd => match (evaluate(&args[0])?, evaluate(&args[1])?) {
+                PAdd => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
                     (VInt(i0), VInt(i1)) => Ok(VInt(i0 + i1)),
                     _ => bail!("add: type error"),
                 },
-                PMul => todo!(),
-                PDiv => todo!(),
-                PNeg => todo!(),
-                PEq => todo!(),
-                PLt => todo!(),
-                PIsnil => todo!(),
-                PT => todo!(),
-                PF => todo!(),
-                PI => todo!(),
-                PB => todo!(),
-                PC => todo!(),
-                PS => todo!(),
+                PMul => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
+                    (VInt(i0), VInt(i1)) => Ok(VInt(i0 * i1)),
+                    _ => bail!("mul: type error"),
+                },
+                PDiv => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
+                    (VInt(i0), VInt(i1)) => Ok(VInt(i0 / i1)),
+                    _ => bail!("div: type error"),
+                },
+                PNeg => match evaluate(&args[0], env)? {
+                    VInt(i0) => Ok(VInt(-i0)),
+                    _ => bail!("neg: type error"),
+                },
+                PEq => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
+                    (VInt(i0), VInt(i1)) => {
+                        if i0 == i1 {
+                            Ok(PT.into())
+                        } else {
+                            Ok(PF.into())
+                        }
+                    }
+                    _ => bail!("eq: type error"),
+                },
+                PLt => match (evaluate(&args[0], env)?, evaluate(&args[1], env)?) {
+                    (VInt(i0), VInt(i1)) => {
+                        if i0 < i1 {
+                            Ok(PT.into())
+                        } else {
+                            Ok(PF.into())
+                        }
+                    }
+                    _ => bail!("lt: type error"),
+                },
+                PIsnil => match evaluate(&args[0], env)? {
+                    VNil => Ok(PT.into()),
+                    _ => Ok(PF.into()),
+                },
+                PT => Ok(evaluate(&args[0], env)?),
+                PF => Ok(evaluate(&args[1], env)?),
+                PI => Ok(evaluate(&args[0], env)?),
+                PB => {
+                    let e0 = Rc::clone(&args[0]);
+                    let e1 = Rc::clone(&args[1]);
+                    let e2 = Rc::clone(&args[2]);
+                    let expr = EAp(e0, EAp(e1, e2).into());
+                    evaluate(&expr.into(), env)
+                }
+                PC => {
+                    let e0 = Rc::clone(&args[0]);
+                    let e1 = Rc::clone(&args[1]);
+                    let e2 = Rc::clone(&args[2]);
+                    let expr = EAp(EAp(e0, e2).into(), e1);
+                    evaluate(&expr.into(), env)
+                }
+                PS => {
+                    let e0 = Rc::clone(&args[0]);
+                    let e1 = Rc::clone(&args[1]);
+                    let e2 = Rc::clone(&args[2]);
+                    let expr = EAp(EAp(e0, Rc::clone(&e2)).into(), EAp(e1, e2).into());
+                    evaluate(&expr.into(), env)
+                }
             }
         } else {
             Ok(VClosure(self, args))
@@ -160,12 +211,12 @@ pub fn parse(input: &str) -> anyhow::Result<Thunk> {
     stack.pop().context("empty expression")
 }
 
-pub fn evaluate(thunk: &Thunk) -> anyhow::Result<Value> {
+pub fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use ThunkEnum::*;
     let mut thunk_ref = thunk.borrow_mut();
     match &*thunk_ref {
         TExpr(e) => {
-            let value = evaluate_expr(&e)?;
+            let value = evaluate_expr(&e, env)?;
             *thunk_ref = TValue(value.clone());
             Ok(value)
         }
@@ -173,27 +224,43 @@ pub fn evaluate(thunk: &Thunk) -> anyhow::Result<Value> {
     }
 }
 
-fn evaluate_expr(e: &Expr) -> anyhow::Result<Value> {
+fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
     use Expr::*;
     Ok(match e {
         ELit(x) => x.clone(),
         &EFun(f) => f.into(),
-        EVar(_) => todo!(),
+        EVar(var) => {
+            let expr = env.get(var).context("unbound variable")?;
+            evaluate(expr, env)?
+        }
         EAp(e0, e1) => {
-            evaluate(e0)?;
+            evaluate(e0, env)?;
             match &*e0.borrow() {
                 ThunkEnum::TExpr(_) => unreachable!(),
                 ThunkEnum::TValue(v0) => match v0 {
                     Value::VClosure(fun, args) => {
                         let mut args = args.clone();
                         args.push(Rc::clone(e1));
-                        fun.call(args)?
+                        fun.call(args, env)?
                     }
                     _ => bail!("not a function: {:?}", v0),
                 },
             }
         }
     })
+}
+
+pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
+    input
+        .lines()
+        .map(|line| {
+            let mut iter = line.split(" = ");
+            let key = iter.next().context("syntax error")?.to_owned();
+            let expr = iter.next().context("syntax error")?;
+            let expr = parse(expr).unwrap();
+            Ok((key, expr))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -239,7 +306,7 @@ mod tests {
     fn eval_add() -> anyhow::Result<()> {
         let input = "ap ap add 1 2";
         let e = parse(input)?;
-        let v = evaluate(&e)?;
+        let v = evaluate(&e, &Default::default())?;
         assert_eq!(v, Value::VInt(3));
         Ok(())
     }

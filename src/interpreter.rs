@@ -406,9 +406,7 @@ mod tests {
             .into(),
         )
         .into();
-        let v = force_evaluate(&input, &env)?;
-        assert_eq!(v, VInt(1));
-        Ok(())
+        force_evaluate(&input, &env).map(|_| ())
     }
 
     #[test]

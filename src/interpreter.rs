@@ -159,9 +159,9 @@ impl PrimFunc {
     }
 }
 
-impl Into<Value> for PrimFunc {
-    fn into(self) -> Value {
-        Value::VClosure(self, Vec::new())
+impl From<PrimFunc> for Value {
+    fn from(pf: PrimFunc) -> Self {
+        Value::VClosure(pf, Vec::new())
     }
 }
 
@@ -173,15 +173,15 @@ pub enum ThunkEnum {
 
 pub type Thunk = Rc<RefCell<ThunkEnum>>;
 
-impl Into<Thunk> for Expr {
-    fn into(self) -> Thunk {
-        Rc::new(RefCell::new(ThunkEnum::TExpr(self)))
+impl From<Expr> for Thunk {
+    fn from(e: Expr) -> Self {
+        Rc::new(RefCell::new(ThunkEnum::TExpr(e)))
     }
 }
 
-impl Into<Thunk> for Value {
-    fn into(self) -> Thunk {
-        Rc::new(RefCell::new(ThunkEnum::TValue(self)))
+impl From<Value> for Thunk {
+    fn from(v: Value) -> Self {
+        Rc::new(RefCell::new(ThunkEnum::TValue(v)))
     }
 }
 
@@ -211,9 +211,8 @@ fn parse_token(token: &str) -> anyhow::Result<Expr> {
         "b" => EFun(PB),
         "c" => EFun(PC),
         "s" => EFun(PS),
-        var if var.starts_with(":") => EVar(var.trim_start_matches(':').parse()?),
         int if int.chars().all(|c| c == '-' || c.is_ascii_digit()) => ELit(VInt(token.parse()?)),
-        _ => bail!("unknown token: {}", token),
+        var => EVar(var.to_owned()),
     };
     Ok(expr)
 }
@@ -235,15 +234,18 @@ pub fn parse(input: &str) -> anyhow::Result<Thunk> {
 
 pub fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use ThunkEnum::*;
+    let value = match &*thunk.borrow() {
+        TExpr(e) => evaluate_expr(e, env)?,
+        TValue(v) => return Ok(v.clone()),
+    };
     let mut thunk_ref = thunk.borrow_mut();
     match &*thunk_ref {
-        TExpr(e) => {
-            let value = evaluate_expr(&e, env)?;
+        TExpr(_) => {
             *thunk_ref = TValue(value.clone());
-            Ok(value)
         }
-        TValue(v) => Ok(v.clone()),
+        _ => (),
     }
+    Ok(value)
 }
 
 fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
@@ -272,6 +274,27 @@ fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
     })
 }
 
+pub fn force_evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
+    use PrimFunc::PCons;
+    use ThunkEnum::*;
+    use Value::{VClosure, VCons};
+    evaluate(thunk, env)?;
+    Ok(match &*thunk.borrow() {
+        TExpr(_) => unreachable!(),
+        TValue(value) => match value {
+            VClosure(fun, args) => match (fun, args.len()) {
+                (PCons, 2) => {
+                    let v0 = force_evaluate(&args[0], env)?;
+                    let v1 = force_evaluate(&args[1], env)?;
+                    VCons(Box::new(v0), Box::new(v1))
+                }
+                _ => bail!("incompatible closure: {:?}", fun),
+            },
+            _ => value.clone(),
+        },
+    })
+}
+
 pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
     input
         .lines()
@@ -279,7 +302,7 @@ pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
             let mut iter = line.split(" = ");
             let key = iter.next().context("syntax error")?.to_owned();
             let expr = iter.next().context("syntax error")?;
-            let expr = parse(expr).unwrap();
+            let expr = parse(expr)?;
             Ok((key, expr))
         })
         .collect()
@@ -287,6 +310,8 @@ pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::*;
     use Expr::*;
     use PrimFunc::*;
@@ -330,6 +355,91 @@ mod tests {
         let e = parse(input)?;
         let v = evaluate(&e, &Default::default())?;
         assert_eq!(v, Value::VInt(3));
+        Ok(())
+    }
+
+    #[test]
+    fn eval_cons1() -> anyhow::Result<()> {
+        let input = "ap ap cons 1 2";
+        let e = parse(input)?;
+        let v = force_evaluate(&e, &Default::default())?;
+        assert_eq!(v, VCons(Box::new(VInt(1)), Box::new(VInt(2))));
+        Ok(())
+    }
+
+    #[test]
+    fn eval_cons2() -> anyhow::Result<()> {
+        let input = "ap ap cons 1 ap car ap ap cons 2 3";
+        let e = parse(input)?;
+        let v = force_evaluate(&e, &Default::default())?;
+        assert_eq!(v, VCons(Box::new(VInt(1)), Box::new(VInt(2))));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_galaxy() -> anyhow::Result<()> {
+        let file = "galaxy.txt";
+        let mut file = std::fs::File::open(file)?;
+        let mut def = String::new();
+        file.read_to_string(&mut def)?;
+        let env = parse_definition(&def)?;
+
+        let input = parse("galaxy")?;
+        evaluate(&input, &env).map(|_| ())
+    }
+
+    #[test]
+    fn eval_galaxy() -> anyhow::Result<()> {
+        let file = "galaxy.txt";
+        let mut file = std::fs::File::open(file)?;
+        let mut def = String::new();
+        file.read_to_string(&mut def)?;
+        let env = parse_definition(&def)?;
+
+        let galaxy = parse("galaxy")?;
+        let input = EAp(
+            EAp(galaxy, VNil.into()).into(),
+            EAp(
+                EAp(Value::from(PCons).into(), VInt(0).into()).into(),
+                VInt(0).into(),
+            )
+            .into(),
+        )
+        .into();
+        let v = force_evaluate(&input, &env)?;
+        assert_eq!(v, VInt(1));
+        Ok(())
+    }
+
+    #[test]
+    fn s_combinator() -> anyhow::Result<()> {
+        let input = "ap ap ap s mul ap add 1 6";
+        let e = parse(input)?;
+        let v = evaluate(&e, &Default::default())?;
+        assert_eq!(v, VInt(42));
+        Ok(())
+    }
+
+    #[test]
+    fn use_env() -> anyhow::Result<()> {
+        let input = "ap ap mul x x";
+        let e = parse(input)?;
+        let env = parse_definition("x = ap ap add 1 2")?;
+        let v = evaluate(&e, &env)?;
+        assert_eq!(v, VInt(9));
+        Ok(())
+    }
+
+    #[test]
+    fn fact() -> anyhow::Result<()> {
+        // fact(x) = eq(x, 0)(1, mul(x, fact(add(-1, x))))
+        let input = "ap fact 5";
+        let e = parse(input)?;
+        let env = "fact = ap ap s ap ap c ap eq 0 1 ap ap s mul ap ap b fact ap add -1";
+        let env = parse_definition(env)?;
+        dbg!(evaluate(&parse("fact")?, &env)?);
+        let v = evaluate(&e, &env)?;
+        assert_eq!(v, VInt(120));
         Ok(())
     }
 }

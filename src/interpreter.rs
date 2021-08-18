@@ -1,6 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, convert::TryInto, rc::Rc};
 
 use anyhow::{bail, Context};
+
+mod galaxy;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expr {
@@ -250,6 +252,7 @@ pub fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
 
 fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
     use Expr::*;
+    use Value::{VClosure, VCons};
     Ok(match e {
         ELit(x) => x.clone(),
         &EFun(f) => f.into(),
@@ -262,11 +265,18 @@ fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
             match &*e0.borrow() {
                 ThunkEnum::TExpr(_) => unreachable!(),
                 ThunkEnum::TValue(v0) => match v0 {
-                    Value::VClosure(fun, args) => {
+                    VClosure(fun, args) => {
                         let mut args = args.clone();
                         args.push(Rc::clone(e1));
                         fun.call(args, env)?
                     }
+                    VCons(car, cdr) => evaluate_expr(
+                        &EAp(
+                            EAp(Rc::clone(e1), (**car).clone().into()).into(),
+                            (**cdr).clone().into(),
+                        ),
+                        env,
+                    )?,
                     _ => bail!("not a function: {:?}", v0),
                 },
             }
@@ -306,6 +316,81 @@ pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
             Ok((key, expr))
         })
         .collect()
+}
+
+fn cons(x: Value, y: Value) -> Value {
+    Value::VCons(Box::new(x), Box::new(y))
+}
+
+fn decompose(value: Value) -> anyhow::Result<(i64, Thunk, Value)> {
+    use Value::{VCons, VInt, VNil};
+    let (flag, state, data) = match value {
+        VCons(flag, tail) => match (*flag, *tail) {
+            (VInt(flag), VCons(state, tail)) => match *tail {
+                VCons(data, nil) if *nil == VNil => (flag, *state, *data),
+                other => bail!(
+                    "type error: expected: cons(value, nil), actual: {:?}",
+                    other
+                ),
+            },
+            other => bail!("type error: expected: (int, cons), actual: {:?}", other),
+        },
+        _ => bail!("type error: expected: cons, actual: {:?}", value),
+    };
+    Ok((flag, state.into(), data))
+}
+
+pub fn interact(
+    protocol: &Thunk,
+    state: &Thunk,
+    vector: Value,
+    env: &Env,
+) -> anyhow::Result<(Thunk, Vec<Picture>)> {
+    use Expr::EAp;
+    let expr = EAp(
+        EAp(Rc::clone(&protocol), Rc::clone(&state)).into(),
+        vector.into(),
+    );
+    let ret = evaluate_expr(&expr, env)?;
+    let (flag, new_state, data) = decompose(ret)?;
+    if flag == 0 {
+        Ok((new_state, data.try_into()?))
+    } else {
+        interact(protocol, &new_state, send(data), env)
+    }
+}
+
+impl std::convert::TryFrom<Value> for Vec<Picture> {
+    type Error = anyhow::Error;
+
+    fn try_from(mut value: Value) -> Result<Self, Self::Error> {
+        use Value::{VCons, VInt};
+        let mut pictures = Vec::new();
+        while let VCons(p_head, p_tail) = value {
+            let mut p_head = *p_head;
+            let mut picture = Vec::new();
+            while let VCons(d_head, d_tail) = p_head {
+                if let VCons(x, y) = *d_head {
+                    if let (VInt(x), VInt(y)) = (*x, *y) {
+                        picture.push((x, y));
+                    } else {
+                        bail!("not a vector");
+                    }
+                } else {
+                    bail!("not a list");
+                }
+                p_head = *d_tail;
+            }
+
+            pictures.push(picture);
+            value = *p_tail;
+        }
+        Ok(pictures)
+    }
+}
+
+fn send(data: Value) -> Value {
+    todo!()
 }
 
 #[cfg(test)]
@@ -363,7 +448,7 @@ mod tests {
         let input = "ap ap cons 1 2";
         let e = parse(input)?;
         let v = force_evaluate(&e, &Default::default())?;
-        assert_eq!(v, VCons(Box::new(VInt(1)), Box::new(VInt(2))));
+        assert_eq!(v, cons(VInt(1), VInt(2)));
         Ok(())
     }
 
@@ -372,7 +457,7 @@ mod tests {
         let input = "ap ap cons 1 ap car ap ap cons 2 3";
         let e = parse(input)?;
         let v = force_evaluate(&e, &Default::default())?;
-        assert_eq!(v, VCons(Box::new(VInt(1)), Box::new(VInt(2))));
+        assert_eq!(v, cons(VInt(1), VInt(2)));
         Ok(())
     }
 
@@ -399,11 +484,7 @@ mod tests {
         let galaxy = parse("galaxy")?;
         let input = EAp(
             EAp(galaxy, VNil.into()).into(),
-            EAp(
-                EAp(Value::from(PCons).into(), VInt(0).into()).into(),
-                VInt(0).into(),
-            )
-            .into(),
+            cons(VInt(0), VInt(0)).into(),
         )
         .into();
         force_evaluate(&input, &env).map(|_| ())
@@ -435,9 +516,16 @@ mod tests {
         let e = parse(input)?;
         let env = "fact = ap ap s ap ap c ap eq 0 1 ap ap s mul ap ap b fact ap add -1";
         let env = parse_definition(env)?;
-        dbg!(evaluate(&parse("fact")?, &env)?);
         let v = evaluate(&e, &env)?;
         assert_eq!(v, VInt(120));
+        Ok(())
+    }
+
+    #[test]
+    fn to_pictures() -> anyhow::Result<()> {
+        let input = cons(cons(cons(VInt(1), VInt(2)), VNil), VNil);
+        let pics: Vec<Picture> = input.try_into()?;
+        assert_eq!(pics, vec![vec![(1, 2)]]);
         Ok(())
     }
 }

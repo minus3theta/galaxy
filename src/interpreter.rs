@@ -322,24 +322,6 @@ fn cons(x: Value, y: Value) -> Value {
     Value::VCons(Box::new(x), Box::new(y))
 }
 
-fn decompose(value: Value) -> anyhow::Result<(i64, Thunk, Value)> {
-    use Value::{VCons, VInt, VNil};
-    let (flag, state, data) = match value {
-        VCons(flag, tail) => match (*flag, *tail) {
-            (VInt(flag), VCons(state, tail)) => match *tail {
-                VCons(data, nil) if *nil == VNil => (flag, *state, *data),
-                other => bail!(
-                    "type error: expected: cons(value, nil), actual: {:?}",
-                    other
-                ),
-            },
-            other => bail!("type error: expected: (int, cons), actual: {:?}", other),
-        },
-        _ => bail!("type error: expected: cons, actual: {:?}", value),
-    };
-    Ok((flag, state.into(), data))
-}
-
 pub fn interact(
     protocol: &Thunk,
     state: &Thunk,
@@ -352,11 +334,33 @@ pub fn interact(
         vector.into(),
     );
     let ret = evaluate_expr(&expr, env)?;
-    let (flag, new_state, data) = decompose(ret)?;
+    let (flag, new_state, data) = ret.try_into()?;
     if flag == 0 {
         Ok((new_state, data.try_into()?))
     } else {
         interact(protocol, &new_state, send(data), env)
+    }
+}
+
+impl std::convert::TryFrom<Value> for (i64, Thunk, Value) {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        use Value::{VCons, VInt, VNil};
+        let (flag, state, data) = match value {
+            VCons(flag, tail) => match (*flag, *tail) {
+                (VInt(flag), VCons(state, tail)) => match *tail {
+                    VCons(data, nil) if *nil == VNil => (flag, *state, *data),
+                    other => bail!(
+                        "type error: expected: cons(value, nil), actual: {:?}",
+                        other
+                    ),
+                },
+                other => bail!("type error: expected: (int, cons), actual: {:?}", other),
+            },
+            _ => bail!("type error: expected: cons, actual: {:?}", value),
+        };
+        Ok((flag, state.into(), data))
     }
 }
 

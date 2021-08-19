@@ -10,6 +10,9 @@ pub use galaxy::GalaxyProtocol;
 mod statelessdraw;
 pub use statelessdraw::StatelessdrawProtocol;
 
+mod statefuldraw;
+pub use statefuldraw::StatefuldrawProtocol;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expr {
     ELit(Value),

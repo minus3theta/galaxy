@@ -69,7 +69,7 @@ fn initialize_internal() -> Result<(), GeneralError> {
         .dyn_into::<CanvasRenderingContext2d>()
         .unwrap();
 
-    let (protocol, env) = interpreter::StatelessdrawProtocol::get_protocol()?;
+    let (protocol, env) = interpreter::StatefuldrawProtocol::get_protocol()?;
     let mut state = Value::VNil.into();
     let mut pictures = Vec::new();
 

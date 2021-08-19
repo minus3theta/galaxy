@@ -39,6 +39,11 @@ features = [
   'Window',
   'MouseEvent',
   'DomRect',
+  'Headers',
+  'Request',
+  'RequestInit',
+  'RequestMode',
+  'Response',
 ]
 
 [dev-dependencies]

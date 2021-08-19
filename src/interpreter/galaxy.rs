@@ -392,11 +392,11 @@ const GALAXY: &str = r":1029 = ap ap cons 7 ap ap cons 123229502148636 nil
 :1494 = ap ap c ap ap b c ap ap b ap b c ap ap b ap b ap b s ap ap b ap b ap b ap b c ap ap c ap ap b b ap ap b c ap ap b ap b c ap ap b ap b ap b c ap ap b ap b ap b ap b b ap ap b ap b ap b ap b ap s i ap ap s ap ap b c ap ap b ap b s ap ap b ap b ap b s ap ap b ap b ap b ap b s ap ap b ap b ap b ap b ap b b ap ap b ap b ap b ap b ap b b ap ap b ap c ap ap b b ap ap b b ap ap b b ap eq 1 ap ap b ap b ap c ap ap b c ap c ap ap c :1490 ap :1199 1 ap c ap ap b add ap ap b neg :1117 ap ap b ap b ap c ap ap b c ap ap b ap b c ap ap b ap b ap b c ap ap b ap c ap ap b b ap ap b b ap ap b b ap ap b ap c ap ap b cons ap ap c cons nil ap ap c ap ap b cons ap ap c ap ap b cons ap ap c cons nil nil nil ap ap b ap c ap ap b c ap ap b ap b b ap ap b ap b cons ap ap c ap ap b c ap ap c ap ap b c ap ap c ap ap b b ap ap b :1166 ap add -1 ap add -1 3 3 ap ap c ap ap b b cons ap ap c cons nil ap ap c ap ap b b add :1117 :1172 ap ap s ap ap b :1162 ap ap b ap mul 3 ap ap c ap ap s ap ap b b ap ap c ap ap b b add neg ap ap b ap s mul div 8 ap ap b ap mul 3 ap ap c div 8
 galaxy = :1338";
 
-use super::Protocol;
+use super::ProtocolGenerator;
 
 pub enum GalaxyProtocol {}
 
-impl Protocol for GalaxyProtocol {
+impl ProtocolGenerator for GalaxyProtocol {
     const DEFINITION: &'static str = GALAXY;
     const PROTOCOL_NAME: &'static str = "galaxy";
 }

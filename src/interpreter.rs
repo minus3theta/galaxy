@@ -339,7 +339,7 @@ pub fn cons(x: Value, y: Value) -> Value {
     Value::VCons(Box::new(x), Box::new(y))
 }
 
-pub fn interact(
+fn interact(
     protocol: &Thunk,
     state: &Thunk,
     vector: Value,
@@ -411,7 +411,31 @@ impl std::convert::TryFrom<Value> for Vec<Picture> {
     }
 }
 
-pub trait Protocol {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Protocol {
+    state: Thunk,
+    protocol: Thunk,
+    env: Env,
+}
+
+impl Protocol {
+    pub fn new<G: ProtocolGenerator>() -> anyhow::Result<Self> {
+        let (protocol, env) = G::get_protocol()?;
+        Ok(Self {
+            state: Value::VNil.into(),
+            protocol,
+            env,
+        })
+    }
+
+    pub fn click(&mut self, x: i64, y: i64) -> anyhow::Result<Vec<Picture>> {
+        let (state, pictures) = interact(&self.protocol, &self.state, (x, y).into(), &self.env)?;
+        self.state = state;
+        Ok(pictures)
+    }
+}
+
+pub trait ProtocolGenerator {
     const DEFINITION: &'static str;
     const PROTOCOL_NAME: &'static str;
     fn get_protocol() -> anyhow::Result<(Thunk, Env)> {

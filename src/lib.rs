@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, EventTarget, HtmlCanvasElement, MouseEvent};
 
-use crate::interpreter::{Picture, Protocol, Value};
+use crate::interpreter::{GalaxyProtocol, Picture, Protocol};
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -69,8 +69,7 @@ fn initialize_internal() -> Result<(), GeneralError> {
         .dyn_into::<CanvasRenderingContext2d>()
         .unwrap();
 
-    let (protocol, env) = interpreter::StatefuldrawProtocol::get_protocol()?;
-    let mut state = Value::VNil.into();
+    let mut protocol = Protocol::new::<GalaxyProtocol>()?;
     let mut pictures = Vec::new();
 
     let scale = 20.0;
@@ -78,10 +77,7 @@ fn initialize_internal() -> Result<(), GeneralError> {
     let mut update = move |event: UpdateEvent| {
         match event {
             UpdateEvent::Click(x, y) => {
-                let (new_state, new_pictures) =
-                    interpreter::interact(&protocol, &state, (x, y).into(), &env).unwrap();
-                state = new_state;
-                pictures = new_pictures;
+                pictures = protocol.click(x, y).unwrap();
             }
         }
         draw(&pictures, &context, canvas_w as f64, canvas_h as f64, scale);
@@ -116,7 +112,6 @@ fn draw(
     context.set_fill_style(&"black".into());
     for pic in pictures {
         for &(x, y) in pic {
-            log(&format!("{}, {}", x, y));
             context.fill_rect(x as f64 * scale, y as f64 * scale, scale, scale);
         }
     }

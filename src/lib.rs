@@ -1,10 +1,12 @@
 mod alien;
-mod interpreter;
+pub mod interpreter;
 pub mod utils;
 
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, EventTarget, HtmlCanvasElement, ImageData, MouseEvent};
+use wasm_bindgen::JsCast;
+use web_sys::{CanvasRenderingContext2d, EventTarget, HtmlCanvasElement, MouseEvent};
+
+use crate::interpreter::{Picture, Protocol, Value};
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -20,13 +22,46 @@ extern "C" {
     fn log(s: &str);
 }
 
+#[derive(Debug)]
+pub enum GeneralError {
+    JsError(JsValue),
+    AnyhowError(anyhow::Error),
+}
+
+impl From<JsValue> for GeneralError {
+    fn from(v: JsValue) -> Self {
+        Self::JsError(v)
+    }
+}
+
+impl From<anyhow::Error> for GeneralError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::AnyhowError(e)
+    }
+}
+
+impl From<GeneralError> for JsValue {
+    fn from(e: GeneralError) -> Self {
+        match e {
+            GeneralError::JsError(v) => v,
+            GeneralError::AnyhowError(e) => format!("{:?}", e).into(),
+        }
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn initialize() -> Result<(), JsValue> {
+    initialize_internal().map_err(|err| format!("{:?}", err).into())
+}
+
+fn initialize_internal() -> Result<(), GeneralError> {
     const CANVAS_ID: &str = "galaxy_canvas";
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.get_element_by_id(CANVAS_ID).unwrap();
     let bounding_rect = canvas.get_bounding_client_rect();
     let canvas: HtmlCanvasElement = canvas.dyn_into::<HtmlCanvasElement>().unwrap();
+    let canvas_w = canvas.width();
+    let canvas_h = canvas.height();
     let context: CanvasRenderingContext2d = canvas
         .get_context("2d")
         .unwrap()
@@ -34,40 +69,59 @@ pub fn initialize() -> Result<(), JsValue> {
         .dyn_into::<CanvasRenderingContext2d>()
         .unwrap();
 
-    let draw = || {
-        let canvas_w = canvas.width() as usize;
-        let canvas_h = canvas.height() as usize;
+    let (protocol, env) = interpreter::StatelessdrawProtocol::get_protocol()?;
+    let mut state = Value::VNil.into();
+    let mut pictures = Vec::new();
 
-        let mut data = Vec::with_capacity(canvas_w * canvas_h);
-        for r in 0..canvas_h {
-            for c in 0..canvas_w {
-                data.push((255 * r / canvas_h) as u8);
-                data.push((255 * c / canvas_w) as u8);
-                data.push(0);
-                data.push(255);
+    let scale = 20.0;
+
+    let mut update = move |event: UpdateEvent| {
+        match event {
+            UpdateEvent::Click(x, y) => {
+                let (new_state, new_pictures) =
+                    interpreter::interact(&protocol, &state, (x, y).into(), &env).unwrap();
+                state = new_state;
+                pictures = new_pictures;
             }
         }
-        let data = ImageData::new_with_u8_clamped_array_and_sh(
-            Clamped(&data),
-            canvas.width(),
-            canvas.height(),
-        )
-        .unwrap();
-        context.put_image_data(&data, 0.0, 0.0).ok();
+        draw(&pictures, &context, canvas_w as f64, canvas_h as f64, scale);
     };
+    update(UpdateEvent::Click(0, 0));
 
     {
         let click_handler = Closure::wrap(Box::new(move |event: MouseEvent| {
-            let x = (event.client_x() as f64 - bounding_rect.left()) / bounding_rect.width();
-            let y = (event.client_y() as f64 - bounding_rect.top()) / bounding_rect.height();
+            let x = (event.client_x() as f64 - bounding_rect.left()) / scale;
+            let y = (event.client_y() as f64 - bounding_rect.top()) / scale;
             log(&format!("Clicked {}, {}", x, y));
+            update(UpdateEvent::Click(x as i64, y as i64));
         }) as Box<dyn FnMut(_)>);
         let canvas_event_target: EventTarget = canvas.clone().dyn_into::<EventTarget>().unwrap();
         canvas_event_target
             .add_event_listener_with_callback("click", click_handler.as_ref().unchecked_ref())?;
         click_handler.forget();
     }
-    draw();
 
     Ok(())
+}
+
+fn draw(
+    pictures: &Vec<Picture>,
+    context: &CanvasRenderingContext2d,
+    canvas_w: f64,
+    canvas_h: f64,
+    scale: f64,
+) {
+    context.set_fill_style(&"white".into());
+    context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
+    context.set_fill_style(&"black".into());
+    for pic in pictures {
+        for &(x, y) in pic {
+            log(&format!("{}, {}", x, y));
+            context.fill_rect(x as f64 * scale, y as f64 * scale, scale, scale);
+        }
+    }
+}
+
+enum UpdateEvent {
+    Click(i64, i64),
 }

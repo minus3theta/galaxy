@@ -5,6 +5,10 @@ use anyhow::{bail, Context};
 use crate::alien::send;
 
 mod galaxy;
+pub use galaxy::GalaxyProtocol;
+
+mod statelessdraw;
+pub use statelessdraw::StatelessdrawProtocol;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expr {
@@ -191,6 +195,14 @@ impl From<Value> for Thunk {
 
 pub type Coord = (i64, i64);
 
+impl From<Coord> for Value {
+    fn from(c: Coord) -> Self {
+        use Value::VInt;
+        let (x, y) = c;
+        cons(VInt(x), VInt(y))
+    }
+}
+
 pub type Picture = Vec<Coord>;
 
 fn parse_token(token: &str) -> anyhow::Result<Expr> {
@@ -221,7 +233,7 @@ fn parse_token(token: &str) -> anyhow::Result<Expr> {
     Ok(expr)
 }
 
-pub fn parse(input: &str) -> anyhow::Result<Thunk> {
+fn parse(input: &str) -> anyhow::Result<Thunk> {
     let mut stack = vec![];
     for token in input.split_ascii_whitespace().rev() {
         match token {
@@ -236,7 +248,7 @@ pub fn parse(input: &str) -> anyhow::Result<Thunk> {
     stack.pop().context("empty expression")
 }
 
-pub fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
+fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use ThunkEnum::*;
     let value = match &*thunk.borrow() {
         TExpr(e) => evaluate_expr(e, env)?,
@@ -286,7 +298,7 @@ fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
     })
 }
 
-pub fn force_evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
+fn force_evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use PrimFunc::PCons;
     use ThunkEnum::*;
     use Value::{VClosure, VCons};
@@ -307,7 +319,7 @@ pub fn force_evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     })
 }
 
-pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
+fn parse_definition(input: &str) -> anyhow::Result<Env> {
     input
         .lines()
         .map(|line| {
@@ -334,8 +346,9 @@ pub fn interact(
     let expr = EAp(
         EAp(Rc::clone(&protocol), Rc::clone(&state)).into(),
         vector.into(),
-    );
-    let ret = evaluate_expr(&expr, env)?;
+    )
+    .into();
+    let ret = force_evaluate(&expr, env)?;
     let (flag, new_state, data) = ret.try_into()?;
     if flag == 0 {
         Ok((new_state, data.try_into()?))
@@ -392,6 +405,15 @@ impl std::convert::TryFrom<Value> for Vec<Picture> {
             value = *p_tail;
         }
         Ok(pictures)
+    }
+}
+
+pub trait Protocol {
+    const DEFINITION: &'static str;
+    const PROTOCOL_NAME: &'static str;
+    fn get_protocol() -> anyhow::Result<(Thunk, Env)> {
+        let env = parse_definition(Self::DEFINITION)?;
+        Ok((parse(Self::PROTOCOL_NAME)?, env))
     }
 }
 
@@ -477,19 +499,15 @@ mod tests {
 
     #[test]
     fn eval_galaxy() -> anyhow::Result<()> {
-        let file = "galaxy.txt";
-        let mut file = std::fs::File::open(file)?;
-        let mut def = String::new();
-        file.read_to_string(&mut def)?;
-        let env = parse_definition(&def)?;
-
-        let galaxy = parse("galaxy")?;
+        let (protocol, env) = self::galaxy::GalaxyProtocol::get_protocol()?;
         let input = EAp(
-            EAp(galaxy, VNil.into()).into(),
+            EAp(protocol, VNil.into()).into(),
             cons(VInt(0), VInt(0)).into(),
         )
         .into();
-        force_evaluate(&input, &env).map(|_| ())
+        let (flag, _, _) = force_evaluate(&input, &env)?.try_into()?;
+        assert_eq!(flag, 0);
+        Ok(())
     }
 
     #[test]

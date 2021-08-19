@@ -1,3 +1,4 @@
+mod alien;
 mod interpreter;
 pub mod utils;
 

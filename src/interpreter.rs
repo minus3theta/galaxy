@@ -2,6 +2,8 @@ use std::{cell::RefCell, collections::HashMap, convert::TryInto, rc::Rc};
 
 use anyhow::{bail, Context};
 
+use crate::alien::send;
+
 mod galaxy;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -318,7 +320,7 @@ pub fn parse_definition(input: &str) -> anyhow::Result<Env> {
         .collect()
 }
 
-fn cons(x: Value, y: Value) -> Value {
+pub fn cons(x: Value, y: Value) -> Value {
     Value::VCons(Box::new(x), Box::new(y))
 }
 
@@ -338,7 +340,7 @@ pub fn interact(
     if flag == 0 {
         Ok((new_state, data.try_into()?))
     } else {
-        interact(protocol, &new_state, send(data), env)
+        interact(protocol, &new_state, send(data)?, env)
     }
 }
 
@@ -391,10 +393,6 @@ impl std::convert::TryFrom<Value> for Vec<Picture> {
         }
         Ok(pictures)
     }
-}
-
-fn send(data: Value) -> Value {
-    todo!()
 }
 
 #[cfg(test)]

@@ -74,13 +74,16 @@ fn initialize_internal() -> Result<(), GeneralError> {
     let mut pictures = Vec::new();
     let mut offset = (0, 0);
 
-    let scale = 20.0;
+    let mut scale = 20.0;
 
     let mut update = move |event: UpdateEvent| {
         match event {
             UpdateEvent::Click(x, y) => {
-                pictures = protocol.click(x - offset.0, y - offset.1).unwrap();
+                pictures = protocol
+                    .click((x / scale) as i64 - offset.0, (y / scale) as i64 - offset.1)
+                    .unwrap();
                 let (new_offset, size) = get_offset(&pictures);
+                scale = (canvas_w as f64 / size.0 as f64).min(canvas_h as f64 / size.1 as f64);
                 offset = new_offset;
             }
         }
@@ -93,14 +96,14 @@ fn initialize_internal() -> Result<(), GeneralError> {
             scale,
         );
     };
-    update(UpdateEvent::Click(0, 0));
+    update(UpdateEvent::Click(0.0, 0.0));
 
     {
         let click_handler = Closure::wrap(Box::new(move |event: MouseEvent| {
-            let x = (event.client_x() as f64 - bounding_rect.left()) / scale;
-            let y = (event.client_y() as f64 - bounding_rect.top()) / scale;
+            let x = event.client_x() as f64 - bounding_rect.left();
+            let y = event.client_y() as f64 - bounding_rect.top();
             log(&format!("Clicked {}, {}", x, y));
-            update(UpdateEvent::Click(x as i64, y as i64));
+            update(UpdateEvent::Click(x, y));
         }) as Box<dyn FnMut(_)>);
         let canvas_event_target: EventTarget = canvas.clone().dyn_into::<EventTarget>().unwrap();
         canvas_event_target
@@ -126,7 +129,7 @@ fn get_offset(pictures: &Vec<Picture>) -> ((i64, i64), (i64, i64)) {
         .minmax()
         .into_option()
         .unwrap_or_default();
-    ((-left + 1, -top + 1), (right - left + 1, bottom - top + 1))
+    ((-left + 1, -top + 1), (right - left + 3, bottom - top + 3))
 }
 
 fn draw(
@@ -153,5 +156,5 @@ fn draw(
 }
 
 enum UpdateEvent {
-    Click(i64, i64),
+    Click(f64, f64),
 }

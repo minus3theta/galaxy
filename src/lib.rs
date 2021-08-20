@@ -2,6 +2,7 @@ mod alien;
 pub mod interpreter;
 pub mod utils;
 
+use itertools::Itertools;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, EventTarget, HtmlCanvasElement, MouseEvent};
@@ -71,16 +72,26 @@ fn initialize_internal() -> Result<(), GeneralError> {
 
     let mut protocol = Protocol::new::<GalaxyProtocol>()?;
     let mut pictures = Vec::new();
+    let mut offset = (0, 0);
 
     let scale = 20.0;
 
     let mut update = move |event: UpdateEvent| {
         match event {
             UpdateEvent::Click(x, y) => {
-                pictures = protocol.click(x, y).unwrap();
+                pictures = protocol.click(x - offset.0, y - offset.1).unwrap();
+                let (new_offset, size) = get_offset(&pictures);
+                offset = new_offset;
             }
         }
-        draw(&pictures, &context, canvas_w as f64, canvas_h as f64, scale);
+        draw(
+            &pictures,
+            &context,
+            canvas_w as f64,
+            canvas_h as f64,
+            offset,
+            scale,
+        );
     };
     update(UpdateEvent::Click(0, 0));
 
@@ -100,19 +111,43 @@ fn initialize_internal() -> Result<(), GeneralError> {
     Ok(())
 }
 
+fn get_offset(pictures: &Vec<Picture>) -> ((i64, i64), (i64, i64)) {
+    let (left, right) = pictures
+        .iter()
+        .flatten()
+        .map(|&(x, _)| x)
+        .minmax()
+        .into_option()
+        .unwrap_or_default();
+    let (top, bottom) = pictures
+        .iter()
+        .flatten()
+        .map(|&(_, y)| y)
+        .minmax()
+        .into_option()
+        .unwrap_or_default();
+    ((-left + 1, -top + 1), (right - left + 1, bottom - top + 1))
+}
+
 fn draw(
     pictures: &Vec<Picture>,
     context: &CanvasRenderingContext2d,
     canvas_w: f64,
     canvas_h: f64,
+    offset: (i64, i64),
     scale: f64,
 ) {
     context.set_fill_style(&"black".into());
     context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
-    context.set_fill_style(&"white".into());
+    context.set_fill_style(&"rgba(255,255,255,0.5)".into());
     for pic in pictures {
         for &(x, y) in pic {
-            context.fill_rect(x as f64 * scale, y as f64 * scale, scale, scale);
+            context.fill_rect(
+                (x + offset.0) as f64 * scale,
+                (y + offset.1) as f64 * scale,
+                scale,
+                scale,
+            );
         }
     }
 }

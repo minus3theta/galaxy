@@ -107,9 +107,9 @@ fn draw(
     canvas_h: f64,
     scale: f64,
 ) {
-    context.set_fill_style(&"white".into());
-    context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
     context.set_fill_style(&"black".into());
+    context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
+    context.set_fill_style(&"white".into());
     for pic in pictures {
         for &(x, y) in pic {
             context.fill_rect(x as f64 * scale, y as f64 * scale, scale, scale);

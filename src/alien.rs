@@ -1,11 +1,21 @@
 use std::iter::{repeat, Peekable};
 
 use anyhow::{bail, Context};
+use reqwest::Client;
 
 use crate::interpreter::{cons, Value};
 
-pub fn send(data: Value) -> anyhow::Result<Value> {
-    Ok(todo!())
+pub async fn send(data: Value) -> anyhow::Result<Value> {
+    let client = Client::new();
+    let body = modulate(&data)?;
+    let res = client
+        .post("https://api.pegovka.space/aliens/send")
+        .body(body)
+        .send()
+        .await?;
+    let res = res.text().await?;
+    let res = demodulate(&res)?;
+    Ok(res)
 }
 
 fn modulate(data: &Value) -> anyhow::Result<String> {

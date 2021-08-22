@@ -1,11 +1,15 @@
-use std::{cell::RefCell, collections::HashMap, convert::TryInto, rc::Rc};
+use std::{
+    collections::HashMap,
+    convert::TryInto,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{bail, Context};
 
 use crate::alien::send;
 
 mod galaxy;
-pub use galaxy::GalaxyProtocol;
+pub use self::galaxy::GalaxyProtocol;
 
 mod statelessdraw;
 pub use statelessdraw::StatelessdrawProtocol;
@@ -13,7 +17,7 @@ pub use statelessdraw::StatelessdrawProtocol;
 mod statefuldraw;
 pub use statefuldraw::StatefuldrawProtocol;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     ELit(Value),
     EFun(PrimFunc),
@@ -21,14 +25,41 @@ pub enum Expr {
     EAp(Thunk, Thunk),
 }
 
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        use Expr::*;
+        match (self, other) {
+            (ELit(l0), ELit(r0)) => l0 == r0,
+            (EFun(l0), EFun(r0)) => l0 == r0,
+            (EVar(l0), EVar(r0)) => l0 == r0,
+            (EAp(l0, l1), EAp(r0, r1)) => {
+                *l0.read().unwrap() == *r0.read().unwrap()
+                    && *l1.read().unwrap() == *r1.read().unwrap()
+            }
+            _ => false,
+        }
+    }
+}
+
 pub type Env = HashMap<String, Thunk>;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub enum Value {
     VInt(i64),
     VCons(Box<Value>, Box<Value>),
     VNil,
     VClosure(PrimFunc, Vec<Thunk>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::VInt(l0), Self::VInt(r0)) => l0 == r0,
+            (Self::VCons(l0, l1), Self::VCons(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::VNil, Self::VNil) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -59,20 +90,20 @@ impl PrimFunc {
         if self.arity() == args.len() {
             match self {
                 PCons => {
-                    let e0 = Rc::clone(&args[0]);
-                    let e1 = Rc::clone(&args[1]);
-                    let e2 = Rc::clone(&args[2]);
+                    let e0 = Arc::clone(&args[0]);
+                    let e1 = Arc::clone(&args[1]);
+                    let e2 = Arc::clone(&args[2]);
                     let expr = EAp(EAp(e2, e0).into(), e1);
                     evaluate(&expr.into(), env)
                 }
                 PCar => {
-                    let e0 = Rc::clone(&args[0]);
+                    let e0 = Arc::clone(&args[0]);
                     let v: Value = PT.into();
                     let expr = EAp(e0, v.into());
                     evaluate(&expr.into(), env)
                 }
                 PCdr => {
-                    let e0 = Rc::clone(&args[0]);
+                    let e0 = Arc::clone(&args[0]);
                     let v: Value = PF.into();
                     let expr = EAp(e0, v.into());
                     evaluate(&expr.into(), env)
@@ -121,24 +152,24 @@ impl PrimFunc {
                 PF => Ok(evaluate(&args[1], env)?),
                 PI => Ok(evaluate(&args[0], env)?),
                 PB => {
-                    let e0 = Rc::clone(&args[0]);
-                    let e1 = Rc::clone(&args[1]);
-                    let e2 = Rc::clone(&args[2]);
+                    let e0 = Arc::clone(&args[0]);
+                    let e1 = Arc::clone(&args[1]);
+                    let e2 = Arc::clone(&args[2]);
                     let expr = EAp(e0, EAp(e1, e2).into());
                     evaluate(&expr.into(), env)
                 }
                 PC => {
-                    let e0 = Rc::clone(&args[0]);
-                    let e1 = Rc::clone(&args[1]);
-                    let e2 = Rc::clone(&args[2]);
+                    let e0 = Arc::clone(&args[0]);
+                    let e1 = Arc::clone(&args[1]);
+                    let e2 = Arc::clone(&args[2]);
                     let expr = EAp(EAp(e0, e2).into(), e1);
                     evaluate(&expr.into(), env)
                 }
                 PS => {
-                    let e0 = Rc::clone(&args[0]);
-                    let e1 = Rc::clone(&args[1]);
-                    let e2 = Rc::clone(&args[2]);
-                    let expr = EAp(EAp(e0, Rc::clone(&e2)).into(), EAp(e1, e2).into());
+                    let e0 = Arc::clone(&args[0]);
+                    let e1 = Arc::clone(&args[1]);
+                    let e2 = Arc::clone(&args[2]);
+                    let expr = EAp(EAp(e0, Arc::clone(&e2)).into(), EAp(e1, e2).into());
                     evaluate(&expr.into(), env)
                 }
             }
@@ -176,23 +207,33 @@ impl From<PrimFunc> for Value {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug)]
 pub enum ThunkEnum {
     TExpr(Expr),
     TValue(Value),
 }
 
-pub type Thunk = Rc<RefCell<ThunkEnum>>;
+impl PartialEq for ThunkEnum {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::TExpr(l0), Self::TExpr(r0)) => l0 == r0,
+            (Self::TValue(l0), Self::TValue(r0)) => l0 == r0,
+            _ => false,
+        }
+    }
+}
+
+pub type Thunk = Arc<RwLock<ThunkEnum>>;
 
 impl From<Expr> for Thunk {
     fn from(e: Expr) -> Self {
-        Rc::new(RefCell::new(ThunkEnum::TExpr(e)))
+        Arc::new(RwLock::new(ThunkEnum::TExpr(e)))
     }
 }
 
 impl From<Value> for Thunk {
     fn from(v: Value) -> Self {
-        Rc::new(RefCell::new(ThunkEnum::TValue(v)))
+        Arc::new(RwLock::new(ThunkEnum::TValue(v)))
     }
 }
 
@@ -253,11 +294,11 @@ fn parse(input: &str) -> anyhow::Result<Thunk> {
 
 fn evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use ThunkEnum::*;
-    let value = match &*thunk.borrow() {
+    let value = match &*thunk.read().unwrap() {
         TExpr(e) => evaluate_expr(e, env)?,
         TValue(v) => return Ok(v.clone()),
     };
-    let mut thunk_ref = thunk.borrow_mut();
+    let mut thunk_ref = thunk.write().unwrap();
     match &*thunk_ref {
         TExpr(_) => {
             *thunk_ref = TValue(value.clone());
@@ -279,17 +320,17 @@ fn evaluate_expr(e: &Expr, env: &Env) -> anyhow::Result<Value> {
         }
         EAp(e0, e1) => {
             evaluate(e0, env)?;
-            match &*e0.borrow() {
+            match &*e0.read().unwrap() {
                 ThunkEnum::TExpr(_) => unreachable!(),
                 ThunkEnum::TValue(v0) => match v0 {
                     VClosure(fun, args) => {
                         let mut args = args.clone();
-                        args.push(Rc::clone(e1));
+                        args.push(Arc::clone(e1));
                         fun.call(args, env)?
                     }
                     VCons(car, cdr) => evaluate_expr(
                         &EAp(
-                            EAp(Rc::clone(e1), (**car).clone().into()).into(),
+                            EAp(Arc::clone(e1), (**car).clone().into()).into(),
                             (**cdr).clone().into(),
                         ),
                         env,
@@ -306,7 +347,7 @@ fn force_evaluate(thunk: &Thunk, env: &Env) -> anyhow::Result<Value> {
     use ThunkEnum::*;
     use Value::{VClosure, VCons};
     evaluate(thunk, env)?;
-    Ok(match &*thunk.borrow() {
+    Ok(match &*thunk.read().unwrap() {
         TExpr(_) => unreachable!(),
         TValue(value) => match value {
             VClosure(fun, args) => match (fun, args.len()) {
@@ -339,24 +380,27 @@ pub fn cons(x: Value, y: Value) -> Value {
     Value::VCons(Box::new(x), Box::new(y))
 }
 
-fn interact(
+async fn interact(
     protocol: &Thunk,
     state: &Thunk,
-    vector: Value,
+    mut vector: Value,
     env: &Env,
 ) -> anyhow::Result<(Thunk, Vec<Picture>)> {
     use Expr::EAp;
-    let expr = EAp(
-        EAp(Rc::clone(&protocol), Rc::clone(&state)).into(),
-        vector.into(),
-    )
-    .into();
-    let ret = force_evaluate(&expr, env)?;
-    let (flag, new_state, data) = ret.try_into()?;
-    if flag == 0 {
-        Ok((new_state, data.try_into()?))
-    } else {
-        interact(protocol, &new_state, send(data)?, env)
+    let mut state = Arc::clone(state);
+    loop {
+        let expr = EAp(
+            EAp(Arc::clone(&protocol), Arc::clone(&state)).into(),
+            vector.into(),
+        )
+        .into();
+        let ret = force_evaluate(&expr, env)?;
+        let (flag, new_state, data) = ret.try_into()?;
+        if flag == 0 {
+            return Ok((new_state, data.try_into()?));
+        }
+        state = new_state;
+        vector = send(data).await?
     }
 }
 
@@ -411,7 +455,7 @@ impl std::convert::TryFrom<Value> for Vec<Picture> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Protocol {
     state: Thunk,
     protocol: Thunk,
@@ -428,8 +472,9 @@ impl Protocol {
         })
     }
 
-    pub fn click(&mut self, x: i64, y: i64) -> anyhow::Result<Vec<Picture>> {
-        let (state, pictures) = interact(&self.protocol, &self.state, (x, y).into(), &self.env)?;
+    pub async fn click(&mut self, x: i64, y: i64) -> anyhow::Result<Vec<Picture>> {
+        let (state, pictures) =
+            interact(&self.protocol, &self.state, (x, y).into(), &self.env).await?;
         self.state = state;
         Ok(pictures)
     }
@@ -451,11 +496,12 @@ mod tests {
     use super::*;
     use Expr::*;
     use PrimFunc::*;
+    use ThunkEnum::TExpr;
     use Value::*;
 
     #[test]
     fn parse_int() {
-        assert_eq!(parse("-1").unwrap(), ELit(VInt(-1)).into());
+        assert_eq!(*parse("-1").unwrap().read().unwrap(), TExpr(ELit(VInt(-1))));
     }
 
     #[test]
@@ -463,12 +509,11 @@ mod tests {
         let input = "ap ap add 1 2";
         let e = parse(input)?;
         assert_eq!(
-            e,
-            EAp(
+            *e.read().unwrap(),
+            TExpr(EAp(
                 EAp(EFun(PAdd).into(), ELit(VInt(1)).into()).into(),
                 ELit(VInt(2)).into()
-            )
-            .into()
+            ))
         );
         Ok(())
     }

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{bail, Context};
 
-use crate::alien::send;
+use crate::{alien::send, log};
 
 mod galaxy;
 pub use self::galaxy::GalaxyProtocol;
@@ -58,6 +58,17 @@ impl PartialEq for Value {
             (Self::VCons(l0, l1), Self::VCons(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::VNil, Self::VNil) => true,
             _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::VInt(i) => write!(f, "{}", i),
+            Value::VCons(x, y) => write!(f, "({} . {})", x.as_ref(), y.as_ref()),
+            Value::VNil => write!(f, "nil"),
+            Value::VClosure(pf, _) => write!(f, "{:?}", pf),
         }
     }
 }
@@ -382,15 +393,14 @@ pub fn cons(x: Value, y: Value) -> Value {
 
 async fn interact(
     protocol: &Thunk,
-    state: &Thunk,
+    mut state: Value,
     mut vector: Value,
     env: &Env,
-) -> anyhow::Result<(Thunk, Vec<Picture>)> {
+) -> anyhow::Result<(Value, Vec<Picture>)> {
     use Expr::EAp;
-    let mut state = Arc::clone(state);
     loop {
         let expr = EAp(
-            EAp(Arc::clone(&protocol), Arc::clone(&state)).into(),
+            EAp(Arc::clone(&protocol), state.into()).into(),
             vector.into(),
         )
         .into();
@@ -404,7 +414,7 @@ async fn interact(
     }
 }
 
-impl std::convert::TryFrom<Value> for (i64, Thunk, Value) {
+impl std::convert::TryFrom<Value> for (i64, Value, Value) {
     type Error = anyhow::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -422,7 +432,7 @@ impl std::convert::TryFrom<Value> for (i64, Thunk, Value) {
             },
             _ => bail!("type error: expected: cons, actual: {:?}", value),
         };
-        Ok((flag, state.into(), data))
+        Ok((flag, state, data))
     }
 }
 
@@ -457,7 +467,7 @@ impl std::convert::TryFrom<Value> for Vec<Picture> {
 
 #[derive(Clone, Debug)]
 pub struct Protocol {
-    state: Thunk,
+    state: Value,
     protocol: Thunk,
     env: Env,
 }
@@ -466,7 +476,7 @@ impl Protocol {
     pub fn new<G: ProtocolGenerator>() -> anyhow::Result<Self> {
         let (protocol, env) = G::get_protocol()?;
         Ok(Self {
-            state: Value::VNil.into(),
+            state: Value::VNil,
             protocol,
             env,
         })
@@ -474,8 +484,9 @@ impl Protocol {
 
     pub async fn click(&mut self, x: i64, y: i64) -> anyhow::Result<Vec<Picture>> {
         let (state, pictures) =
-            interact(&self.protocol, &self.state, (x, y).into(), &self.env).await?;
+            interact(&self.protocol, self.state.clone(), (x, y).into(), &self.env).await?;
         self.state = state;
+        log(&format!("{}", &self.state));
         Ok(pictures)
     }
 }

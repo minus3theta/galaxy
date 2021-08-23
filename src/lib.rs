@@ -87,6 +87,9 @@ fn get_context() -> CanvasRenderingContext2d {
 static VIEW: Lazy<Mutex<View>> = Lazy::new(|| Mutex::new(View::new()));
 static PROTOCOL: Lazy<Mutex<Protocol>> =
     Lazy::new(|| Mutex::new(Protocol::new::<GalaxyProtocol>().unwrap()));
+thread_local! {
+    static CONTEXT: CanvasRenderingContext2d = get_context();
+}
 
 #[wasm_bindgen(start)]
 pub fn initialize() {
@@ -173,21 +176,22 @@ fn color_of_layer(layer: usize) -> &'static str {
 }
 
 fn draw(pictures: &Vec<Picture>, canvas_w: f64, canvas_h: f64, offset: (i64, i64), scale: f64) {
-    let context = get_context();
-    context.set_fill_style(&"black".into());
-    context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
-    context.set_fill_style(&"rgba(255,255,255,0.5)".into());
-    for (layer, pic) in pictures.iter().enumerate().rev() {
-        context.set_fill_style(&color_of_layer(layer).into());
-        for &(x, y) in pic {
-            context.fill_rect(
-                (x + offset.0) as f64 * scale,
-                (y + offset.1) as f64 * scale,
-                scale,
-                scale,
-            );
+    CONTEXT.with(|context| {
+        context.set_fill_style(&"black".into());
+        context.fill_rect(0.0, 0.0, canvas_w, canvas_h);
+        context.set_fill_style(&"rgba(255,255,255,0.5)".into());
+        for (layer, pic) in pictures.iter().enumerate().rev() {
+            context.set_fill_style(&color_of_layer(layer).into());
+            for &(x, y) in pic {
+                context.fill_rect(
+                    (x + offset.0) as f64 * scale,
+                    (y + offset.1) as f64 * scale,
+                    scale,
+                    scale,
+                );
+            }
         }
-    }
+    })
 }
 
 #[derive(Debug, Clone)]
